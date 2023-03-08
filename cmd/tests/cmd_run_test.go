@@ -529,6 +529,25 @@ func getCloudTestEndChecker(
 	return srv
 }
 
+func getCloudMetricsServer(t *testing.T, testRunID int) *httptest.Server {
+	metricsFlushed := false
+	testStart := cloudTestStartSimple(t, testRunID)
+
+	srv := getTestServer(t, map[string]http.Handler{
+		"POST ^/v1/tests$": testStart,
+		fmt.Sprintf("POST ^/v2/metrics/%d$", testRunID): http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+			metricsFlushed = true
+		}),
+	})
+
+	t.Cleanup(func() {
+		assert.Truef(t, metricsFlushed, "expected test to have called the cloud API endpoint to flush the metrics")
+		srv.Close()
+	})
+
+	return srv
+}
+
 func getSimpleCloudOutputTestState(
 	tb testing.TB, script string, cliFlags []string,
 	expRunStatus cloudapi.RunStatus, expResultStatus cloudapi.ResultStatus, expExitCode exitcodes.ExitCode,
@@ -1943,4 +1962,45 @@ func TestBadLogOutput(t *testing.T) {
 			cmd.ExecuteWithGlobalState(ts.GlobalState)
 		})
 	}
+}
+
+func TestCloudOutputV2(t *testing.T) {
+	t.Parallel()
+	script := `
+		import { sleep } from 'k6';
+		export let options = {
+			scenarios: {
+				sc1: {
+					executor: 'per-vu-iterations',
+					vus: 1, iterations: 5,
+				}
+			},
+			thresholds: {
+				'iterations': ['count == 5'],
+			},
+		};
+
+		export default function () { };
+	`
+	cliFlags := []string{"-v", "--log-output=stdout", "--out", "cloud"}
+
+	srv := getCloudMetricsServer(t, 123)
+	ts := getSingleFileTestState(t, script, cliFlags, 0)
+	ts.Env["K6_CLOUD_HOST"] = srv.URL
+	ts.Env["K6_CLOUD_USE_VERSION_2"] = "true"
+
+	cmd.ExecuteWithGlobalState(ts.GlobalState)
+
+	stdout := ts.Stdout.String()
+	t.Log(stdout)
+
+	assert.Contains(t, stdout, `execution: local`)
+	assert.Contains(t, stdout, `output: cloud (https://app.k6.io/runs/123)`)
+	assert.Contains(t, stdout, `Started!" output=cloudv2`)
+	assert.Contains(t, stdout, `✓ iterations...........: 5`)
+	assert.Contains(t, stdout, `Successfully flushed buffered samples to the cloud`)
+	assert.Contains(t, stdout, `Cloud output successfully stopped!`)
+	assert.Contains(t, stdout, `Stopped!" output=cloudv2`)
+
+	assert.NotContains(t, stdout, `failed to flush metrics`)
 }
