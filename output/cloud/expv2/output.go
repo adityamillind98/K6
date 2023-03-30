@@ -29,6 +29,11 @@ type Output struct {
 	logger          logrus.FieldLogger
 	client          *MetricsClient
 	periodicFlusher *output.PeriodicFlusher
+
+	// TODO: if the metric refactor (#2905) will introduce
+	// a sequential ID for metrics
+	// then we could reuse the same strategy here
+	activeSeries map[*metrics.Metric]aggregatedSamples
 }
 
 // New creates a new cloud output.
@@ -76,14 +81,22 @@ func (o *Output) flushMetrics() {
 
 	start := time.Now()
 
-	series := o.collectSamples()
-	if series == nil {
+	if hasOne := o.collectSamples(); !hasOne {
 		return
 	}
 
-	metricSet := make([]*pbcloud.Metric, 0, len(series))
-	for m, aggr := range series {
+	// TODO: in case an aggregation period will be added then
+	// it continue only if the aggregation time frame passed
+
+	metricSet := make([]*pbcloud.Metric, 0, len(o.activeSeries))
+	for m, aggr := range o.activeSeries {
+		if len(aggr.Samples) < 1 {
+			// If a bucket (a metric) has been added
+			// then the assumption is to collect at least once in a flush interval.
+			continue
+		}
 		metricSet = append(metricSet, o.mapMetricProto(m, aggr))
+		aggr.Clean()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), o.config.MetricPushInterval.TimeDuration())
@@ -98,30 +111,31 @@ func (o *Output) flushMetrics() {
 	o.logger.WithField("t", time.Since(start)).Debug("Successfully flushed buffered samples to the cloud")
 }
 
-func (o *Output) collectSamples() map[*metrics.Metric]aggregatedSamples {
+func (o *Output) collectSamples() (updates bool) {
 	samplesContainers := o.GetBufferedSamples()
 	if len(samplesContainers) < 1 {
-		return nil
+		return false
 	}
 
-	// TODO: we expect to do something more complex here
-	// so a more efficient mapping is expected
-
-	series := make(map[*metrics.Metric]aggregatedSamples)
+	var (
+		aggr aggregatedSamples
+		ok   bool
+	)
 	for _, sampleContainer := range samplesContainers {
 		samples := sampleContainer.GetSamples()
 		for _, sample := range samples {
-			aggr, ok := series[sample.Metric]
+			aggr, ok = o.activeSeries[sample.Metric]
 			if !ok {
 				aggr = aggregatedSamples{
-					Samples: make(map[metrics.TimeSeries][]metrics.Sample),
+					Samples: make(map[metrics.TimeSeries][]*metrics.Sample),
 				}
-				series[sample.Metric] = aggr
+				o.activeSeries[sample.Metric] = aggr
 			}
-			aggr.AddSample(sample)
+			aggr.AddSample(&sample)
 		}
 	}
-	return series
+
+	return true
 }
 
 func (o *Output) mapMetricProto(m *metrics.Metric, as aggregatedSamples) *pbcloud.Metric {
@@ -136,6 +150,10 @@ func (o *Output) mapMetricProto(m *metrics.Metric, as aggregatedSamples) *pbclou
 	case metrics.Trend:
 		mtype = pbcloud.MetricType_TREND
 	}
+
+	// TODO: based on the fact that this mapping is a pointer
+	// and it is escaped on the heap evaluate if it makes
+	// sense to allocate just once reusing a cached version
 	return &pbcloud.Metric{
 		Name:       m.Name,
 		Type:       mtype,
@@ -144,12 +162,28 @@ func (o *Output) mapMetricProto(m *metrics.Metric, as aggregatedSamples) *pbclou
 }
 
 type aggregatedSamples struct {
-	Samples map[metrics.TimeSeries][]metrics.Sample
+	Samples map[metrics.TimeSeries][]*metrics.Sample
 }
 
-func (as *aggregatedSamples) AddSample(s metrics.Sample) {
-	ss := as.Samples[s.TimeSeries]
-	as.Samples[s.TimeSeries] = append(ss, s)
+func (as *aggregatedSamples) AddSample(s *metrics.Sample) {
+	tss, ok := as.Samples[s.TimeSeries]
+	if !ok {
+		// TODO: optimize the slice allocation
+		// A simple 1st step: Reuse the last seen len?
+		as.Samples[s.TimeSeries] = []*metrics.Sample{s}
+		return
+	}
+	as.Samples[s.TimeSeries] = append(tss, s)
+}
+
+func (as *aggregatedSamples) Clean() {
+	// TODO: evaluate if it makes sense
+	// to keep the most frequent used keys
+
+	// the compiler optimizes this
+	for k := range as.Samples {
+		delete(as.Samples, k)
+	}
 }
 
 func (as *aggregatedSamples) MapAsProto() []*pbcloud.TimeSeries {
