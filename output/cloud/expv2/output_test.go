@@ -15,7 +15,9 @@ import (
 func TestOutputCollectSamples(t *testing.T) {
 	t.Parallel()
 
-	o := Output{}
+	o := Output{
+		activeSeries: make(map[*metrics.Metric]aggregatedSamples),
+	}
 	r := metrics.NewRegistry()
 
 	m1 := r.MustNewMetric("metric1", metrics.Counter)
@@ -46,11 +48,13 @@ func TestOutputCollectSamples(t *testing.T) {
 		metrics.Samples{s1},
 	})
 
-	samplesByMetrics := o.collectSamples()
-	require.Len(t, samplesByMetrics, 2)
-	assert.Equal(t, []metrics.Sample{s1, s1}, samplesByMetrics[m1].Samples[s1.TimeSeries])
-	assert.Equal(t, []metrics.Sample{subs1}, samplesByMetrics[m1].Samples[subs1.TimeSeries])
-	assert.Equal(t, []metrics.Sample{s2}, samplesByMetrics[m2].Samples[s2.TimeSeries])
+	hasOne := o.collectSamples()
+	require.True(t, hasOne)
+	require.Len(t, o.activeSeries, 2)
+
+	assert.Equal(t, []*metrics.Sample{&s1, &s1}, o.activeSeries[m1].Samples[s1.TimeSeries])
+	assert.Equal(t, []*metrics.Sample{&subs1}, o.activeSeries[m1].Samples[subs1.TimeSeries])
+	assert.Equal(t, []*metrics.Sample{&s2}, o.activeSeries[m2].Samples[s2.TimeSeries])
 }
 
 func TestOutputMapMetricProto(t *testing.T) {
@@ -68,8 +72,8 @@ func TestOutputMapMetricProto(t *testing.T) {
 	}
 
 	aggSamples := aggregatedSamples{
-		Samples: map[metrics.TimeSeries][]metrics.Sample{
-			s1.TimeSeries: {s1},
+		Samples: map[metrics.TimeSeries][]*metrics.Sample{
+			s1.TimeSeries: {&s1},
 		},
 	}
 
@@ -150,8 +154,8 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 			}
 
 			aggSamples := aggregatedSamples{
-				Samples: map[metrics.TimeSeries][]metrics.Sample{
-					s1.TimeSeries: {s1, s1},
+				Samples: map[metrics.TimeSeries][]*metrics.Sample{
+					s1.TimeSeries: {&s1, &s1},
 				},
 			}
 			pbsamples := aggSamples.MapAsProto()
