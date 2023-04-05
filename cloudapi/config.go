@@ -28,7 +28,7 @@ type Config struct {
 	TestRunDetails null.String `json:"testRunDetails" envconfig:"K6_CLOUD_TEST_RUN_DETAILS"`
 	NoCompress     null.Bool   `json:"noCompress" envconfig:"K6_CLOUD_NO_COMPRESS"`
 	StopOnError    null.Bool   `json:"stopOnError" envconfig:"K6_CLOUD_STOP_ON_ERROR"`
-	UseVersion2    null.Bool   `json:"useVersion2" envconfig:"K6_CLOUD_USE_VERSION_2"`
+	APIVersion     null.Int    `json:"apiVersion" envconfig:"K6_CLOUD_API_VERSION"`
 
 	MaxMetricSamplesPerPackage null.Int `json:"maxMetricSamplesPerPackage" envconfig:"K6_CLOUD_MAX_METRIC_SAMPLES_PER_PACKAGE"`
 
@@ -150,7 +150,7 @@ func NewConfig() Config {
 		MetricPushConcurrency:      null.NewInt(1, false),
 		MaxMetricSamplesPerPackage: null.NewInt(100000, false),
 		Timeout:                    types.NewNullDuration(1*time.Minute, false),
-		UseVersion2:                null.NewBool(false, false),
+		APIVersion:                 null.NewInt(1, false),
 		// Aggregation is disabled by default, since AggregationPeriod has no default value
 		// but if it's enabled manually or from the cloud service, those are the default values it will use:
 		AggregationCalcInterval:         types.NewNullDuration(3*time.Second, false),
@@ -202,8 +202,8 @@ func (c Config) Apply(cfg Config) Config {
 	if cfg.Timeout.Valid {
 		c.Timeout = cfg.Timeout
 	}
-	if cfg.UseVersion2.Valid {
-		c.UseVersion2 = cfg.UseVersion2
+	if cfg.APIVersion.Valid {
+		c.APIVersion = cfg.APIVersion
 	}
 	if cfg.MaxMetricSamplesPerPackage.Valid {
 		c.MaxMetricSamplesPerPackage = cfg.MaxMetricSamplesPerPackage
