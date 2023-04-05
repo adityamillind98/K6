@@ -24,6 +24,7 @@ type httpDoer interface {
 type MetricsClient struct {
 	httpClient httpDoer
 	logger     logrus.FieldLogger
+	token      string
 	host       string
 	userAgent  string
 
@@ -31,18 +32,25 @@ type MetricsClient struct {
 }
 
 // NewMetricsClient creates and initializes a new MetricsClient.
-func NewMetricsClient(logger logrus.FieldLogger, host string) *MetricsClient {
+func NewMetricsClient(logger logrus.FieldLogger, host string, token string) (*MetricsClient, error) {
+	if host == "" {
+		return nil, fmt.Errorf("host is required")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
 	return &MetricsClient{
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		logger:     logger,
 		host:       host,
+		token:      token,
 		userAgent:  fmt.Sprintf("k6cloud/v%s", consts.Version),
 		pushBufferPool: sync.Pool{
 			New: func() interface{} {
 				return &bytes.Buffer{}
 			},
 		},
-	}
+	}, nil
 }
 
 // Push pushes the provided metric samples for the given referenceID
@@ -70,13 +78,12 @@ func (mc *MetricsClient) Push(ctx context.Context, referenceID string, samples *
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("User-Agent", mc.userAgent)
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	req.Header.Set("Content-Encoding", "snappy")
 	req.Header.Set("K6-Metrics-Protocol-Version", "2.0")
-
-	// TODO: Add authentication
-	// req.Header.Set("Authorization", fmt.Sprintf("Token %s", c.token))
+	req.Header.Set("Authorization", fmt.Sprintf("Token %s", mc.token))
 
 	resp, err := mc.httpClient.Do(req)
 	if err != nil {

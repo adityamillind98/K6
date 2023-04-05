@@ -86,7 +86,10 @@ func TestOutputMapMetricProto(t *testing.T) {
 func TestAggregatedSamplesMapAsProto(t *testing.T) {
 	t.Parallel()
 
-	expLabels := []*pbcloud.Label{{Name: "key1", Value: "val1"}}
+	expLabels := []*pbcloud.Label{
+		{Name: "test_run_id", Value: "fake-test-id"},
+		{Name: "key1", Value: "val1"},
+	}
 	now := time.Now()
 	tests := []struct {
 		mtyp   metrics.MetricType
@@ -95,7 +98,7 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 		{
 			mtyp: metrics.Counter,
 			expmap: &pbcloud.TimeSeries{
-				Labels: expLabels,
+				Labels: append([]*pbcloud.Label{{Name: "__name__", Value: "metriccounter"}}, expLabels...),
 				Samples: &pbcloud.TimeSeries_CounterSamples{
 					CounterSamples: &pbcloud.CounterSamples{
 						Values: []*pbcloud.CounterValue{
@@ -109,7 +112,7 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 		{
 			mtyp: metrics.Gauge,
 			expmap: &pbcloud.TimeSeries{
-				Labels: expLabels,
+				Labels: append([]*pbcloud.Label{{Name: "__name__", Value: "metricgauge"}}, expLabels...),
 				Samples: &pbcloud.TimeSeries_GaugeSamples{
 					GaugeSamples: &pbcloud.GaugeSamples{
 						Values: []*pbcloud.GaugeValue{
@@ -123,7 +126,7 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 		{
 			mtyp: metrics.Rate,
 			expmap: &pbcloud.TimeSeries{
-				Labels: expLabels,
+				Labels: append([]*pbcloud.Label{{Name: "__name__", Value: "metricrate"}}, expLabels...),
 				Samples: &pbcloud.TimeSeries_RateSamples{
 					RateSamples: &pbcloud.RateSamples{
 						Values: []*pbcloud.RateValue{
@@ -158,7 +161,7 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 					s1.TimeSeries: {&s1, &s1},
 				},
 			}
-			pbsamples := aggSamples.MapAsProto()
+			pbsamples := aggSamples.MapAsProto("fake-test-id")
 			require.Len(t, pbsamples, 1)
 			assert.Equal(t, tc.expmap.Labels, pbsamples[0].Labels)
 			assert.Equal(t, tc.expmap.Samples, pbsamples[0].Samples)

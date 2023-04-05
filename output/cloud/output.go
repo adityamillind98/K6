@@ -166,12 +166,10 @@ func validateRequiredSystemTags(scriptTags *metrics.SystemTagSet) error {
 // Start calls the k6 Cloud API to initialize the test run, and then starts the
 // goroutine that would listen for metric samples and send them to the cloud.
 func (out *Output) Start() error {
-	// TODO: should we care about this in v2?
 	if out.config.PushRefID.Valid {
 		out.referenceID = out.config.PushRefID.String
 		out.logger.WithField("referenceId", out.referenceID).Debug("directly pushing metrics without init")
-		out.startBackgroundProcesses()
-		return nil
+		return out.startBackgroundProcesses()
 	}
 
 	thresholds := make(map[string][]string)
@@ -193,7 +191,7 @@ func (out *Output) Start() error {
 
 	response, err := out.client.CreateTestRun(testRun)
 	if err != nil {
-		return err
+		return fmt.Errorf("create the test run failed: %w", err)
 	}
 	out.referenceID = response.ReferenceID
 
@@ -204,20 +202,9 @@ func (out *Output) Start() error {
 		out.config = out.config.Apply(*response.ConfigOverride)
 	}
 
-	// TODO: unit test this config override logic
-	if !out.config.UseVersion2.Bool {
-		// fallback on v1
-		out.startBackgroundProcesses()
-	} else {
-		out.outv2, err = expv2.New(out.logger, out.config)
-		if err != nil {
-			return fmt.Errorf("failed to init the cloud output v2: %w", err)
-		}
-		out.outv2.SetReferenceID(out.referenceID)
-		err = out.outv2.Start()
-		if err != nil {
-			return fmt.Errorf("failed to startup the cloud output v2: %w", err)
-		}
+	err = out.startBackgroundProcesses()
+	if err != nil {
+		return err
 	}
 
 	out.logger.WithFields(logrus.Fields{
@@ -230,7 +217,21 @@ func (out *Output) Start() error {
 	return nil
 }
 
-func (out *Output) startBackgroundProcesses() {
+func (out *Output) startBackgroundProcesses() error {
+	if out.config.UseVersion2.Bool {
+		var err error
+		out.outv2, err = expv2.New(out.logger, out.config)
+		if err != nil {
+			return fmt.Errorf("failed to init the cloud output v2: %w", err)
+		}
+		out.outv2.SetReferenceID(out.referenceID)
+		err = out.outv2.Start()
+		if err != nil {
+			return fmt.Errorf("failed to startup the cloud output v2: %w", err)
+		}
+		return nil
+	}
+
 	aggregationPeriod := out.config.AggregationPeriod.TimeDuration()
 	// If enabled, start periodically aggregating the collected HTTP trails
 	if aggregationPeriod > 0 {
@@ -276,6 +277,8 @@ func (out *Output) startBackgroundProcesses() {
 			}
 		}
 	}()
+
+	return nil
 }
 
 // Stop gracefully stops all metric emission from the output: when all metric

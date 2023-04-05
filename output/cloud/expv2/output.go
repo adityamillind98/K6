@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/mstoykov/atlas"
 	"github.com/sirupsen/logrus"
 	"go.k6.io/k6/cloudapi"
 	"go.k6.io/k6/metrics"
@@ -38,10 +39,15 @@ type Output struct {
 
 // New creates a new cloud output.
 func New(logger logrus.FieldLogger, conf cloudapi.Config) (*Output, error) {
+	mc, err := NewMetricsClient(logger, conf.Host.String, conf.Token.String)
+	if err != nil {
+		return nil, err
+	}
 	return &Output{
-		config: conf,
-		client: NewMetricsClient(logger, conf.Host.String),
-		logger: logger.WithFields(logrus.Fields{"output": "cloudv2"}),
+		config:       conf,
+		client:       mc,
+		logger:       logger.WithFields(logrus.Fields{"output": "cloudv2"}),
+		activeSeries: make(map[*metrics.Metric]aggregatedSamples),
 	}, nil
 }
 
@@ -123,15 +129,15 @@ func (o *Output) collectSamples() (updates bool) {
 	)
 	for _, sampleContainer := range samplesContainers {
 		samples := sampleContainer.GetSamples()
-		for _, sample := range samples {
-			aggr, ok = o.activeSeries[sample.Metric]
+		for i := 0; i < len(samples); i++ {
+			aggr, ok = o.activeSeries[samples[i].Metric]
 			if !ok {
 				aggr = aggregatedSamples{
 					Samples: make(map[metrics.TimeSeries][]*metrics.Sample),
 				}
-				o.activeSeries[sample.Metric] = aggr
+				o.activeSeries[samples[i].Metric] = aggr
 			}
-			aggr.AddSample(&sample)
+			aggr.AddSample(&samples[i])
 		}
 	}
 
@@ -157,7 +163,7 @@ func (o *Output) mapMetricProto(m *metrics.Metric, as aggregatedSamples) *pbclou
 	return &pbcloud.Metric{
 		Name:       m.Name,
 		Type:       mtype,
-		TimeSeries: as.MapAsProto(),
+		TimeSeries: as.MapAsProto(o.referenceID),
 	}
 }
 
@@ -186,15 +192,23 @@ func (as *aggregatedSamples) Clean() {
 	}
 }
 
-func (as *aggregatedSamples) MapAsProto() []*pbcloud.TimeSeries {
+func (as *aggregatedSamples) MapAsProto(refID string) []*pbcloud.TimeSeries {
 	if len(as.Samples) < 1 {
 		return nil
 	}
 	pbseries := make([]*pbcloud.TimeSeries, 0, len(as.Samples))
 	for ts, samples := range as.Samples {
+		if ts.Metric.Type == metrics.Trend {
+			// skip trend metrics
+			continue
+		}
+
 		pb := pbcloud.TimeSeries{}
 		// TODO: optimize removing Map
 		// and using https://github.com/grafana/k6/issues/2764
+		pb.Labels = make([]*pbcloud.Label, 0, ((*atlas.Node)(ts.Tags)).Len())
+		pb.Labels = append(pb.Labels, &pbcloud.Label{Name: "__name__", Value: ts.Metric.Name})
+		pb.Labels = append(pb.Labels, &pbcloud.Label{Name: "test_run_id", Value: refID})
 		for ktag, vtag := range ts.Tags.Map() {
 			pb.Labels = append(pb.Labels, &pbcloud.Label{Name: ktag, Value: vtag})
 		}

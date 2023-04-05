@@ -1,11 +1,13 @@
 package expv2
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,11 +33,12 @@ func TestMetricsClientPush(t *testing.T) {
 
 		assert.Equal(t, "/v2/metrics/test-ref-id", r.URL.Path)
 		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "Token fake-token", r.Header.Get("Authorization"))
 		assert.Contains(t, r.Header.Get("User-Agent"), "k6cloud/v0.4")
 		assert.Equal(t, "application/x-protobuf", r.Header.Get("Content-Type"))
 		assert.Equal(t, "snappy", r.Header.Get("Content-Encoding"))
 		assert.Equal(t, "2.0", r.Header.Get("K6-Metrics-Protocol-Version"))
-
+		assert.Equal(t, "2.0", r.Header.Get("K6-Metrics-Protocol-Version"))
 		b, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		assert.NotEmpty(t, b)
@@ -44,11 +47,12 @@ func TestMetricsClientPush(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(h))
 	defer ts.Close()
 
-	mc := NewMetricsClient(testutils.NewLogger(t), ts.URL)
+	mc, err := NewMetricsClient(testutils.NewLogger(t), ts.URL, "fake-token")
+	require.NoError(t, err)
 	mc.httpClient = ts.Client()
 
 	mset := pbcloud.MetricSet{}
-	err := mc.Push(context.TODO(), "test-ref-id", &mset)
+	err = mc.Push(context.TODO(), "test-ref-id", &mset)
 	<-done
 	require.NoError(t, err)
 	assert.Equal(t, 1, reqs)
@@ -63,10 +67,11 @@ func TestMetricsClientPushUnexpectedStatus(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(h))
 	defer ts.Close()
 
-	mc := NewMetricsClient(testutils.NewLogger(t), ts.URL)
+	mc, err := NewMetricsClient(nil, ts.URL, "fake-token")
+	require.NoError(t, err)
 	mc.httpClient = ts.Client()
 
-	err := mc.Push(context.TODO(), "test-ref-id", nil)
+	err = mc.Push(context.TODO(), "test-ref-id", nil)
 	assert.ErrorContains(t, err, "500 Internal Server Error")
 }
 
@@ -77,8 +82,14 @@ func TestMetricsClientPushError(t *testing.T) {
 		return nil, fmt.Errorf("fake generated error")
 	}
 
-	mc := NewMetricsClient(testutils.NewLogger(t), "")
-	mc.httpClient = httpDoerFunc(httpClientMock)
+	mc := MetricsClient{
+		httpClient: httpDoerFunc(httpClientMock),
+		pushBufferPool: sync.Pool{
+			New: func() interface{} {
+				return &bytes.Buffer{}
+			},
+		},
+	}
 
 	err := mc.Push(context.TODO(), "test-ref-id", nil)
 	assert.ErrorContains(t, err, "fake generated error")

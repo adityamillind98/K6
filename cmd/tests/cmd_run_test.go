@@ -1988,6 +1988,7 @@ func TestCloudOutputV2(t *testing.T) {
 	ts := getSingleFileTestState(t, script, cliFlags, 0)
 	ts.Env["K6_CLOUD_HOST"] = srv.URL
 	ts.Env["K6_CLOUD_USE_VERSION_2"] = "true"
+	ts.Env["K6_CLOUD_TOKEN"] = "fake-token"
 
 	cmd.ExecuteWithGlobalState(ts.GlobalState)
 
