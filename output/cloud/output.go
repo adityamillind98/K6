@@ -212,13 +212,13 @@ func (out *Output) Start() error {
 		"projectId":   out.config.ProjectID,
 		"duration":    out.duration,
 		"referenceId": out.referenceID,
-		"outputv2":    out.config.UseVersion2,
+		"apiVersion":  out.config.APIVersion.Int64,
 	}).Debug("Started!")
 	return nil
 }
 
 func (out *Output) startBackgroundProcesses() error {
-	if out.config.UseVersion2.Bool {
+	if out.config.APIVersion.Int64 == 2 {
 		var err error
 		out.outv2, err = expv2.New(out.logger, out.config)
 		if err != nil {
