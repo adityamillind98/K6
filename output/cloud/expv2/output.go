@@ -109,7 +109,6 @@ func (o *Output) flushMetrics() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), o.config.MetricPushInterval.TimeDuration())
 	defer cancel()
-
 	err := o.client.Push(ctx, o.referenceID, &pbcloud.MetricSet{Metrics: metricSet})
 	if err != nil {
 		o.logger.WithError(err).Error("failed to push metrics to the cloud")
@@ -194,11 +193,6 @@ func (as *aggregatedSamples) MapAsProto(refID string) []*pbcloud.TimeSeries {
 	}
 	pbseries := make([]*pbcloud.TimeSeries, 0, len(as.Samples))
 	for ts, samples := range as.Samples {
-		if ts.Metric.Type == metrics.Trend {
-			// skip trend metrics
-			continue
-		}
-
 		pb := pbcloud.TimeSeries{}
 		// TODO: optimize removing Map
 		// and using https://github.com/grafana/k6/issues/2764
@@ -209,7 +203,6 @@ func (as *aggregatedSamples) MapAsProto(refID string) []*pbcloud.TimeSeries {
 			pb.Labels = append(pb.Labels, &pbcloud.Label{Name: ktag, Value: vtag})
 		}
 
-		// TODO: extend with other missing types
 		switch ts.Metric.Type {
 		case metrics.Counter:
 			counterSamples := &pbcloud.CounterSamples{}
@@ -254,7 +247,18 @@ func (as *aggregatedSamples) MapAsProto(refID string) []*pbcloud.TimeSeries {
 				RateSamples: rateSamples,
 			}
 		case metrics.Trend:
-			// TODO: implement the HDR histogram mapping
+			trendSamples := &pbcloud.TrendHdrSamples{}
+			for _, trendSample := range samples {
+				hdrValue := histogramAsProto(
+					newHistogram([]float64{trendSample.Value}),
+					trendSample.Time,
+				)
+				trendSamples.Values = append(trendSamples.Values, hdrValue)
+			}
+
+			pb.Samples = &pbcloud.TimeSeries_TrendHdrSamples{
+				TrendHdrSamples: trendSamples,
+			}
 		}
 		pbseries = append(pbseries, &pb)
 	}

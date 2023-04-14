@@ -134,15 +134,48 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 				},
 			},
 		},
-		// {mtyp: metrics.Trend},
+		{
+			mtyp: metrics.Trend,
+			expmap: &pbcloud.TimeSeries{
+				Labels: append([]*pbcloud.Label{{Name: "__name__", Value: "metrictrend"}}, expLabels...),
+				Samples: &pbcloud.TimeSeries_TrendHdrSamples{
+					TrendHdrSamples: &pbcloud.TrendHdrSamples{
+						Values: []*pbcloud.TrendHdrValue{
+							{
+								Time:              timestamppb.New(now),
+								MaxValue:          42.0,
+								MinValue:          42.0,
+								Counters:          []uint32{1},
+								MinResolution:     float64(1),
+								LowerCounterIndex: 42,
+								SignificantDigits: 2.0,
+								Sum:               42.0,
+								Count:             1,
+							},
+							{
+								Time:              timestamppb.New(now),
+								MaxValue:          42.0,
+								MinValue:          42.0,
+								Counters:          []uint32{1},
+								MinResolution:     float64(1),
+								LowerCounterIndex: 42,
+								SignificantDigits: 2.0,
+								Sum:               42.0,
+								Count:             1,
+							},
+						},
+					},
+				},
+			},
+		},
 	}
-
-	r := metrics.NewRegistry()
 
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.mtyp.String(), func(t *testing.T) {
 			t.Parallel()
+
+			r := metrics.NewRegistry()
 
 			s1 := metrics.Sample{
 				TimeSeries: metrics.TimeSeries{
@@ -158,8 +191,10 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 					s1.TimeSeries: {&s1, &s1},
 				},
 			}
+
 			pbsamples := aggSamples.MapAsProto("fake-test-id")
 			require.Len(t, pbsamples, 1)
+
 			assert.Equal(t, tc.expmap.Labels, pbsamples[0].Labels)
 			assert.Equal(t, tc.expmap.Samples, pbsamples[0].Samples)
 		})

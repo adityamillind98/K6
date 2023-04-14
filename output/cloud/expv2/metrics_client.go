@@ -104,10 +104,16 @@ func (mc *MetricsClient) Push(ctx context.Context, referenceID string, samples *
 	return nil
 }
 
+const b100KiB = 100 * 1024
+
 func newRequestBody(data *pbcloud.MetricSet) ([]byte, error) {
 	b, err := proto.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("encoding series as protobuf write request failed: %w", err)
+	}
+	if len(b) > b100KiB {
+		return nil, fmt.Errorf("the protobuf message is too large to be handled from the cloud processor; "+
+			"size: %d, limit: 1MB", len(b))
 	}
 	if snappy.MaxEncodedLen(len(b)) < 0 {
 		return nil, fmt.Errorf("the protobuf message is too large to be handled by Snappy encoder; "+
