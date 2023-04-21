@@ -85,11 +85,13 @@ func (o *Output) flushMetrics() {
 		return
 	}
 
-	start := time.Now()
-
-	if hasOne := o.collectSamples(); !hasOne {
+	samplesContainers := o.GetBufferedSamples()
+	if len(samplesContainers) < 1 {
 		return
 	}
+
+	start := time.Now()
+	o.collectSamples(samplesContainers)
 
 	// TODO: in case an aggregation period will be added then
 	// it continue only if the aggregation time frame passed
@@ -110,24 +112,20 @@ func (o *Output) flushMetrics() {
 
 	err := o.client.Push(ctx, o.referenceID, &pbcloud.MetricSet{Metrics: metricSet})
 	if err != nil {
-		o.logger.Error(err)
+		o.logger.WithError(err).Error("failed to push metrics to the cloud")
 		return
 	}
 
 	o.logger.WithField("t", time.Since(start)).Debug("Successfully flushed buffered samples to the cloud")
 }
 
-func (o *Output) collectSamples() (updates bool) {
-	samplesContainers := o.GetBufferedSamples()
-	if len(samplesContainers) < 1 {
-		return false
-	}
-
+// collectSamples drain the buffer and collect all the samples
+func (o *Output) collectSamples(containers []metrics.SampleContainer) {
 	var (
 		aggr aggregatedSamples
 		ok   bool
 	)
-	for _, sampleContainer := range samplesContainers {
+	for _, sampleContainer := range containers {
 		samples := sampleContainer.GetSamples()
 		for i := 0; i < len(samples); i++ {
 			aggr, ok = o.activeSeries[samples[i].Metric]
@@ -140,21 +138,19 @@ func (o *Output) collectSamples() (updates bool) {
 			aggr.AddSample(&samples[i])
 		}
 	}
-
-	return true
 }
 
 func (o *Output) mapMetricProto(m *metrics.Metric, as aggregatedSamples) *pbcloud.Metric {
 	var mtype pbcloud.MetricType
 	switch m.Type {
 	case metrics.Counter:
-		mtype = pbcloud.MetricType_COUNTER
+		mtype = pbcloud.MetricType_METRIC_TYPE_COUNTER
 	case metrics.Gauge:
-		mtype = pbcloud.MetricType_GAUGE
+		mtype = pbcloud.MetricType_METRIC_TYPE_GAUGE
 	case metrics.Rate:
-		mtype = pbcloud.MetricType_RATE
+		mtype = pbcloud.MetricType_METRIC_TYPE_RATE
 	case metrics.Trend:
-		mtype = pbcloud.MetricType_TREND
+		mtype = pbcloud.MetricType_METRIC_TYPE_TREND
 	}
 
 	// TODO: based on the fact that this mapping is a pointer
@@ -230,11 +226,12 @@ func (as *aggregatedSamples) MapAsProto(refID string) []*pbcloud.TimeSeries {
 			gaugeSamples := &pbcloud.GaugeSamples{}
 			for _, gaugeSample := range samples {
 				gaugeSamples.Values = append(gaugeSamples.Values, &pbcloud.GaugeValue{
-					Time: timestamppb.New(gaugeSample.Time),
-					Last: gaugeSample.Value,
-					Min:  gaugeSample.Value,
-					Max:  gaugeSample.Value,
-					Avg:  gaugeSample.Value,
+					Time:  timestamppb.New(gaugeSample.Time),
+					Last:  gaugeSample.Value,
+					Min:   gaugeSample.Value,
+					Max:   gaugeSample.Value,
+					Avg:   gaugeSample.Value,
+					Count: 1,
 				})
 			}
 			pb.Samples = &pbcloud.TimeSeries_GaugeSamples{
