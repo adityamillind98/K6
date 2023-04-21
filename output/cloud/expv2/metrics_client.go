@@ -3,6 +3,7 @@ package expv2
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -25,26 +26,26 @@ type MetricsClient struct {
 	httpClient httpDoer
 	logger     logrus.FieldLogger
 	token      string
-	host       string
 	userAgent  string
 
 	pushBufferPool sync.Pool
+	baseURL        string
 }
 
 // NewMetricsClient creates and initializes a new MetricsClient.
 func NewMetricsClient(logger logrus.FieldLogger, host string, token string) (*MetricsClient, error) {
 	if host == "" {
-		return nil, fmt.Errorf("host is required")
+		return nil, errors.New("host is required")
 	}
 	if token == "" {
-		return nil, fmt.Errorf("token is required")
+		return nil, errors.New("token is required")
 	}
 	return &MetricsClient{
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		logger:     logger,
-		host:       host,
+		baseURL:    host + "/v2/metrics/",
 		token:      token,
-		userAgent:  fmt.Sprintf("k6cloud/v%s", consts.Version),
+		userAgent:  "k6cloud/v" + consts.Version,
 		pushBufferPool: sync.Pool{
 			New: func() interface{} {
 				return &bytes.Buffer{}
@@ -56,10 +57,9 @@ func NewMetricsClient(logger logrus.FieldLogger, host string, token string) (*Me
 // Push pushes the provided metric samples for the given referenceID
 func (mc *MetricsClient) Push(ctx context.Context, referenceID string, samples *pbcloud.MetricSet) error {
 	if referenceID == "" {
-		return fmt.Errorf("a Reference ID of the test run is required")
+		return errors.New("a Reference ID of the test run is required")
 	}
 	start := time.Now()
-	url := fmt.Sprintf("%s/v2/metrics/%s", mc.host, referenceID)
 
 	b, err := newRequestBody(samples)
 	if err != nil {
@@ -74,6 +74,10 @@ func (mc *MetricsClient) Push(ctx context.Context, referenceID string, samples *
 	if err != nil {
 		return err
 	}
+	// TODO: it is always the same
+	// we don't expect to share this client across different refID
+	// with a bit of effort we can find a way to just allocate once
+	url := mc.baseURL + referenceID
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, buf)
 	if err != nil {
 		return err
@@ -83,17 +87,17 @@ func (mc *MetricsClient) Push(ctx context.Context, referenceID string, samples *
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	req.Header.Set("Content-Encoding", "snappy")
 	req.Header.Set("K6-Metrics-Protocol-Version", "2.0")
-	req.Header.Set("Authorization", fmt.Sprintf("Token %s", mc.token))
+	req.Header.Set("Authorization", "Token "+mc.token)
 
 	resp, err := mc.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to push metrics: %w", err)
+		return err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to push metrics: push metrics response got an unexpected status code: %s", resp.Status)
+		return fmt.Errorf("response got an unexpected status code: %s", resp.Status)
 	}
 	mc.logger.WithField("t", time.Since(start)).WithField("size", len(b)).
 		Debug("Pushed part to cloud")

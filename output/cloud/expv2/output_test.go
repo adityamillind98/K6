@@ -41,15 +41,12 @@ func TestOutputCollectSamples(t *testing.T) {
 		},
 	}
 
-	o.AddMetricSamples([]metrics.SampleContainer{
+	o.collectSamples([]metrics.SampleContainer{
 		metrics.Samples{s1},
 		metrics.Samples{s2},
 		metrics.Samples{subs1},
 		metrics.Samples{s1},
 	})
-
-	hasOne := o.collectSamples()
-	require.True(t, hasOne)
 	require.Len(t, o.activeSeries, 2)
 
 	assert.Equal(t, []*metrics.Sample{&s1, &s1}, o.activeSeries[m1].Samples[s1.TimeSeries])
@@ -79,7 +76,7 @@ func TestOutputMapMetricProto(t *testing.T) {
 
 	protodata := o.mapMetricProto(m1, aggSamples)
 	assert.Equal(t, "metric1", protodata.Name)
-	assert.Equal(t, "COUNTER", pbcloud.MetricType_name[int32(protodata.Type)])
+	assert.Equal(t, "METRIC_TYPE_COUNTER", pbcloud.MetricType_name[int32(protodata.Type)])
 	assert.Len(t, protodata.TimeSeries, 1)
 }
 
@@ -116,8 +113,8 @@ func TestAggregatedSamplesMapAsProto(t *testing.T) {
 				Samples: &pbcloud.TimeSeries_GaugeSamples{
 					GaugeSamples: &pbcloud.GaugeSamples{
 						Values: []*pbcloud.GaugeValue{
-							{Time: timestamppb.New(now), Last: 42, Min: 42, Max: 42, Avg: 42},
-							{Time: timestamppb.New(now), Last: 42, Min: 42, Max: 42, Avg: 42},
+							{Time: timestamppb.New(now), Last: 42, Min: 42, Max: 42, Avg: 42, Count: 1},
+							{Time: timestamppb.New(now), Last: 42, Min: 42, Max: 42, Avg: 42, Count: 1},
 						},
 					},
 				},
