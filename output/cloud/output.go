@@ -17,7 +17,6 @@ import (
 	"go.k6.io/k6/errext"
 	"go.k6.io/k6/errext/exitcodes"
 	"go.k6.io/k6/output"
-	"go.k6.io/k6/output/cloud/expv2"
 
 	"go.k6.io/k6/lib"
 	"go.k6.io/k6/lib/consts"
@@ -45,8 +44,6 @@ type Output struct {
 
 	logger logrus.FieldLogger
 	opts   lib.Options
-
-	outv2 *expv2.Output
 
 	// TODO: optimize this
 	//
@@ -169,7 +166,8 @@ func (out *Output) Start() error {
 	if out.config.PushRefID.Valid {
 		out.referenceID = out.config.PushRefID.String
 		out.logger.WithField("referenceId", out.referenceID).Debug("directly pushing metrics without init")
-		return out.startBackgroundProcesses()
+		out.startBackgroundProcesses()
+		return nil
 	}
 
 	thresholds := make(map[string][]string)
@@ -191,7 +189,7 @@ func (out *Output) Start() error {
 
 	response, err := out.client.CreateTestRun(testRun)
 	if err != nil {
-		return fmt.Errorf("create the test run failed: %w", err)
+		return err
 	}
 	out.referenceID = response.ReferenceID
 
@@ -202,36 +200,18 @@ func (out *Output) Start() error {
 		out.config = out.config.Apply(*response.ConfigOverride)
 	}
 
-	err = out.startBackgroundProcesses()
-	if err != nil {
-		return err
-	}
+	out.startBackgroundProcesses()
 
 	out.logger.WithFields(logrus.Fields{
 		"name":        out.config.Name,
 		"projectId":   out.config.ProjectID,
 		"duration":    out.duration,
 		"referenceId": out.referenceID,
-		"apiVersion":  out.config.APIVersion.Int64,
 	}).Debug("Started!")
 	return nil
 }
 
-func (out *Output) startBackgroundProcesses() error {
-	if out.config.APIVersion.Int64 == 2 {
-		var err error
-		out.outv2, err = expv2.New(out.logger, out.config)
-		if err != nil {
-			return fmt.Errorf("failed to init the cloud output v2: %w", err)
-		}
-		out.outv2.SetReferenceID(out.referenceID)
-		err = out.outv2.Start()
-		if err != nil {
-			return fmt.Errorf("failed to startup the cloud output v2: %w", err)
-		}
-		return nil
-	}
-
+func (out *Output) startBackgroundProcesses() {
 	aggregationPeriod := out.config.AggregationPeriod.TimeDuration()
 	// If enabled, start periodically aggregating the collected HTTP trails
 	if aggregationPeriod > 0 {
@@ -277,8 +257,6 @@ func (out *Output) startBackgroundProcesses() error {
 			}
 		}
 	}()
-
-	return nil
 }
 
 // Stop gracefully stops all metric emission from the output: when all metric
@@ -293,21 +271,13 @@ func (out *Output) Stop() error {
 // all metric samples are emitted, it makes a cloud API call to finish the test
 // run. If testErr was specified, it extracts the RunStatus from it.
 func (out *Output) StopWithTestError(testErr error) error {
-	if out.outv2 == nil {
-		out.logger.Debug("Stopping the cloud output...")
-		close(out.stopAggregation)
-		out.aggregationDone.Wait() // could be a no-op, if we have never started the aggregation
-		out.logger.Debug("Aggregation stopped, stopping metric emission...")
-		close(out.stopOutput)
-		out.outputDone.Wait()
-		out.logger.Debug("Metric emission stopped, calling cloud API...")
-	} else {
-		err := out.outv2.StopWithTestError(testErr)
-		if err != nil {
-			out.logger.WithError(err).Warn("Failed to stop the cloud output v2")
-		}
-	}
-
+	out.logger.Debug("Stopping the cloud output...")
+	close(out.stopAggregation)
+	out.aggregationDone.Wait() // could be a no-op, if we have never started the aggregation
+	out.logger.Debug("Aggregation stopped, stopping metric emission...")
+	close(out.stopOutput)
+	out.outputDone.Wait()
+	out.logger.Debug("Metric emission stopped, calling cloud API...")
 	err := out.testFinished(testErr)
 	if err != nil {
 		out.logger.WithFields(logrus.Fields{"error": err}).Warn("Failed to send test finished to the cloud")
@@ -389,11 +359,6 @@ func (out *Output) SetTestRunStopCallback(stopFunc func(error)) {
 // called concurrently, so it defers as much of the work as possible to the
 // asynchronous goroutines initialized in Start().
 func (out *Output) AddMetricSamples(sampleContainers []metrics.SampleContainer) {
-	if out.outv2 != nil {
-		out.outv2.AddMetricSamples(sampleContainers)
-		return
-	}
-
 	select {
 	case <-out.stopSendingMetrics:
 		return
